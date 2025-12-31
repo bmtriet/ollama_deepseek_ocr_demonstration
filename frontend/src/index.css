@@ -1,0 +1,68 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-950 text-slate-200 antialiased min-h-screen selection:bg-primary-500/30;
+  }
+}
+
+@layer components {
+  .glass {
+    @apply bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl;
+  }
+
+  .glass-card {
+    @apply glass rounded-2xl p-6 transition-all duration-300;
+  }
+
+  .btn-primary {
+    @apply px-4 py-2 bg-primary-600 hover:bg-primary-500 text-white rounded-lg font-medium transition-all duration-200 shadow-lg shadow-primary-900/20 active:scale-95 flex items-center gap-2;
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2 bg-white/5 hover:bg-white/10 text-slate-200 rounded-lg font-medium transition-all duration-200 border border-white/10 active:scale-95 flex items-center gap-2;
+  }
+
+  .input-field {
+    @apply w-full bg-white/5 border border-white/10 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500/50 transition-all duration-200;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+}
+
+@layer components {
+  .prose-custom table {
+    @apply w-full border-collapse my-4 rounded-lg overflow-hidden border border-white/10;
+  }
+
+  .prose-custom th {
+    @apply bg-white/10 text-primary-300 font-bold p-3 text-left border-b border-white/10;
+  }
+
+  .prose-custom td {
+    @apply p-3 border-b border-white/5 text-primary-100;
+  }
+
+  .prose-custom tr:last-child td {
+    @apply border-b-0;
+  }
+
+  .prose-custom tr:hover {
+    @apply bg-white/5 transition-colors duration-150;
+  }
+}
