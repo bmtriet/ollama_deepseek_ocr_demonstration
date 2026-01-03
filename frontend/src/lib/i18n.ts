@@ -27,6 +27,8 @@ const translations = {
         locate_object: 'Locate Object',
         locate_placeholder: 'Enter keyword to locate...',
         locate_btn: 'Locate',
+        render_table: 'Render as Table',
+        hide_table: 'Hide Table',
     },
     'zh-TW': {
         title: 'DeepSeek OCR 助手',
@@ -52,6 +54,8 @@ const translations = {
         locate_object: '定位物件',
         locate_placeholder: '輸入關鍵字以定位...',
         locate_btn: '定位',
+        render_table: '渲染為表格',
+        hide_table: '隱藏表格',
     }
 };
 

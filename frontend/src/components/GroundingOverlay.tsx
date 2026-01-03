@@ -1,88 +1,19 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import type { GroundingBox } from '../lib/api';
 
 interface GroundingOverlayProps {
     boxes: GroundingBox[];
-    imageUrl: string;
     visible: boolean;
     highlightedId: string | null;
+    imageDims: { width: number, height: number, left: number, top: number } | null;
 }
 
 export const GroundingOverlay: React.FC<GroundingOverlayProps> = ({
     boxes,
-    imageUrl,
     visible,
-    highlightedId
+    highlightedId,
+    imageDims
 }) => {
-    const containerRef = useRef<HTMLDivElement>(null);
-    const [imageDims, setImageDims] = useState<{ width: number, height: number, left: number, top: number } | null>(null);
-
-    const updateDims = () => {
-        if (!containerRef.current) return;
-
-        const container = containerRef.current;
-        const containerWidth = container.clientWidth;
-        const containerHeight = container.clientHeight;
-
-        if (containerWidth === 0 || containerHeight === 0) return;
-
-        const img = new Image();
-        img.src = imageUrl;
-
-        const process = () => {
-            const imgWidth = img.naturalWidth;
-            const imgHeight = img.naturalHeight;
-
-            const containerAspect = containerWidth / containerHeight;
-            const imgAspect = imgWidth / imgHeight;
-
-            let renderedWidth, renderedHeight, left, top;
-
-            if (imgAspect > containerAspect) {
-                renderedWidth = containerWidth;
-                renderedHeight = containerWidth / imgAspect;
-                left = 0;
-                top = (containerHeight - renderedHeight) / 2;
-            } else {
-                renderedHeight = containerHeight;
-                renderedWidth = containerHeight * imgAspect;
-                top = 0;
-                left = (containerWidth - renderedWidth) / 2;
-            }
-
-            setImageDims({ width: renderedWidth, height: renderedHeight, left, top });
-        };
-
-        if (img.complete) {
-            process();
-        } else {
-            img.onload = process;
-        }
-    };
-
-    useEffect(() => {
-        updateDims();
-
-        const observer = new ResizeObserver(() => {
-            // Using requestAnimationFrame to avoid "ResizeObserver loop limit exceeded"
-            window.requestAnimationFrame(updateDims);
-        });
-
-        if (containerRef.current) {
-            observer.observe(containerRef.current);
-        }
-
-        window.addEventListener('resize', updateDims);
-        return () => {
-            observer.disconnect();
-            window.removeEventListener('resize', updateDims);
-        };
-    }, [imageUrl]);
-
-    useEffect(() => {
-        console.log('GroundingOverlay Debug:', { visible, boxesCount: boxes.length, imageDims, imageUrl });
-    }, [visible, boxes, imageDims, imageUrl]);
-
     const canvasRef = useRef<HTMLCanvasElement>(null);
 
     useEffect(() => {
@@ -95,7 +26,15 @@ export const GroundingOverlay: React.FC<GroundingOverlayProps> = ({
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        boxes.forEach((box, index) => {
+        // Filter boxes: if something is highlighted, ONLY show that one.
+        const displayedBoxes = highlightedId
+            ? boxes.filter(box => box.id === highlightedId)
+            : boxes;
+
+        displayedBoxes.forEach((box) => {
+            // Find its original index in the full boxes array for the label
+            const originalIndex = boxes.findIndex(b => b.id === box.id);
+
             const x = (box.box.x1 / 1000) * imageDims.width;
             const y = (box.box.y1 / 1000) * imageDims.height;
             const w = ((box.box.x2 - box.box.x1) / 1000) * imageDims.width;
@@ -103,9 +42,9 @@ export const GroundingOverlay: React.FC<GroundingOverlayProps> = ({
             const isHighlighted = highlightedId === box.id;
 
             // Styles
-            ctx.lineWidth = isHighlighted ? 3 : 2;
+            ctx.lineWidth = isHighlighted ? 1.5 : 1;
             ctx.strokeStyle = isHighlighted ? '#facc15' : '#22c55e'; // yellow-400 : green-500
-            ctx.fillStyle = isHighlighted ? 'rgba(250, 204, 21, 0.2)' : 'rgba(34, 197, 94, 0.1)';
+            ctx.fillStyle = isHighlighted ? 'rgba(250, 204, 21, 0.4)' : 'rgba(34, 197, 94, 0.1)';
 
             // Draw Box
             ctx.beginPath();
@@ -114,7 +53,7 @@ export const GroundingOverlay: React.FC<GroundingOverlayProps> = ({
             ctx.stroke();
 
             // Draw Label
-            const labelText = `${index + 1}`;
+            const labelText = `${originalIndex + 1}`;
             ctx.font = 'bold 10px sans-serif';
             const textMetrics = ctx.measureText(labelText);
             const textWidth = textMetrics.width;
@@ -133,13 +72,10 @@ export const GroundingOverlay: React.FC<GroundingOverlayProps> = ({
 
     }, [boxes, imageDims, visible, highlightedId]);
 
-    // If visible but no dims, render invisible to measure.
-    // If not visible, return null.
     if (!visible) return null;
 
     return (
         <div
-            ref={containerRef}
             className="absolute inset-0 pointer-events-none z-10 overflow-hidden"
             style={{ visibility: imageDims ? 'visible' : 'hidden' }}
         >

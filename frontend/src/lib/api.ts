@@ -56,7 +56,7 @@ export function parseGrounding(text: string): GroundingBox[] {
     const boxes: GroundingBox[] = [];
     const matchedRanges: [number, number][] = [];
 
-    const addBox = (match: RegExpExecArray, type: string, textContent: string, coordsStr: string) => {
+    const addBox = (match: RegExpExecArray, type: string, textContent: string, coordsStr: string, fullMatch: string) => {
         const start = match.index;
         const end = match.index + match[0].length;
 
@@ -72,12 +72,25 @@ export function parseGrounding(text: string): GroundingBox[] {
 
             flatCoords.forEach((c: number[], i: number) => {
                 if (Array.isArray(c) && c.length === 4) {
+                    // Check if there's additional content after the tags (like table HTML)
+                    let finalText = textContent || 'Located Item';
+
+                    // Look for content immediately after the closing tag
+                    const afterTagPos = end;
+                    const remainingText = text.substring(afterTagPos);
+
+                    // Check if there's a table or other structured content following
+                    const tableMatch = remainingText.match(/^(\s*\n)?(<table>[\s\S]*?<\/table>)/);
+                    if (tableMatch) {
+                        finalText = tableMatch[2]; // Use the table HTML as the text
+                    }
+
                     boxes.push({
                         id: `${type}-${start}-${i}`,
-                        text: textContent || 'Located Item',
+                        text: finalText,
                         // Try standard [x1, y1, x2, y2] format
                         box: { x1: c[0], y1: c[1], x2: c[2], y2: c[3] },
-                        raw: match[0]
+                        raw: fullMatch
                     });
                 }
             });
@@ -91,25 +104,25 @@ export function parseGrounding(text: string): GroundingBox[] {
     const refDetWithClosingRegex = /<\|ref\|>(.*?)<\|\/ref\|><\|det\|>(\[\[.*?\]\])<\|\/det\|>/g;
     let match;
     while ((match = refDetWithClosingRegex.exec(text)) !== null) {
-        addBox(match, 'ref-closing', match[1], match[2]);
+        addBox(match, 'ref-closing', match[1], match[2], match[0]);
     }
 
     // 2. Half tags (legacy): <|ref|>text<|det|>[[coords]]
     const refDetRegex = /<\|ref\|>(.*?)<\|det\|>(\[\[.*?\]\])/g;
     while ((match = refDetRegex.exec(text)) !== null) {
-        addBox(match, 'ref', match[1], match[2]);
+        addBox(match, 'ref', match[1], match[2], match[0]);
     }
 
     // 3. Partial closing: [[coords]]<|/det|>
     const closingDetRegex = /(\[\[.*?\]\])<\|\/det\|>/g;
     while ((match = closingDetRegex.exec(text)) !== null) {
-        addBox(match, 'closing-det', 'Located Item', match[1]);
+        addBox(match, 'closing-det', 'Located Item', match[1], match[0]);
     }
 
     // 4. Standalone coords: [[coords]]
     const standaloneRegex = /\[\[\d+,\s*\d+,\s*\d+,\s*\d+\]\]/g;
     while ((match = standaloneRegex.exec(text)) !== null) {
-        addBox(match, 'standalone', 'Located Item', match[0]);
+        addBox(match, 'standalone', 'Located Item', match[0], match[0]);
     }
 
     // Sort boxes by their appearance in text to keep numbering intuitive
