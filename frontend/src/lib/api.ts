@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000';
+const OLLAMA_API_URL = 'http://localhost:11434/api/generate';
+const MODEL_NAME = 'deepseek-ocr';
 
 export interface OCRResult {
     text: string;
@@ -22,120 +23,101 @@ export interface GroundingBox {
     raw: string; // The original tag string
 }
 
-export async function performOCR(file: File, prompt: string): Promise<OCRResult> {
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('prompt', prompt);
+async function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => {
+            const result = reader.result as string;
+            // Remove the data:image/...;base64, prefix
+            resolve(result.split(',')[1]);
+        };
+        reader.onerror = error => reject(error);
+    });
+}
 
-    const response = await axios.post(`${API_BASE_URL}/ocr`, formData, {
-        headers: {
-            'Content-Type': 'multipart/form-data',
-        },
+export async function performOCR(file: File, prompt: string): Promise<OCRResult> {
+    const base64Image = await fileToBase64(file);
+
+    const response = await axios.post(OLLAMA_API_URL, {
+        model: MODEL_NAME,
+        prompt: prompt,
+        images: [base64Image],
+        stream: false
     });
 
-    return response.data;
+    return {
+        text: response.data.response,
+        done: response.data.done
+    };
 }
 
 export function parseGrounding(text: string): GroundingBox[] {
     const boxes: GroundingBox[] = [];
+    const matchedRanges: [number, number][] = [];
 
-    // Pattern 1: With closing tags: <|ref|>text<|/ref|><|det|>[[coords]]<|/det|>
-    const refDetWithClosingRegex = /<\|ref\|>(.*?)<\|\/ref\|><\|det\|>(\[\[.*?\]\])<\|\/det\|>/g;
-    let match: RegExpExecArray | null;
+    const addBox = (match: RegExpExecArray, type: string, textContent: string, coordsStr: string) => {
+        const start = match.index;
+        const end = match.index + match[0].length;
 
-    while ((match = refDetWithClosingRegex.exec(text)) !== null) {
-        const currentMatch = match;
+        // Check if this range overlaps with any already matched range
+        if (matchedRanges.some(([s, e]) => (start < e && end > s))) {
+            return;
+        }
+
         try {
-            const coords = JSON.parse(currentMatch[2]);
-            if (Array.isArray(coords)) {
-                const flatCoords = Array.isArray(coords[0]) ? coords : [coords];
-                flatCoords.forEach((c: number[], i: number) => {
-                    if (c.length === 4) {
-                        boxes.push({
-                            id: `ref-closing-${currentMatch.index}-${i}`,
-                            text: currentMatch[1] || 'Object',
-                            // Swapped to [x1, y1, x2, y2]
-                            box: { x1: c[0], y1: c[1], x2: c[2], y2: c[3] },
-                            raw: currentMatch[0]
-                        });
-                    }
-                });
-            }
-        } catch (e) { }
-    }
+            const coords = JSON.parse(coordsStr);
+            // Handle both [[y1,x1,y2,x2]] and [y1,x1,y2,x2] variants
+            const flatCoords = (Array.isArray(coords) && Array.isArray(coords[0])) ? coords : [coords];
 
-    // Pattern 2: Without closing tags (legacy): <|ref|>text<|det|>[[coords]]
-    const refDetRegex = /<\|ref\|>(.*?)<\|det\|>(\[\[.*?\]\])/g;
-    while ((match = refDetRegex.exec(text)) !== null) {
-        const currentMatch = match;
-        try {
-            const coords = JSON.parse(currentMatch[2]);
-            if (Array.isArray(coords)) {
-                const flatCoords = Array.isArray(coords[0]) ? coords : [coords];
-                flatCoords.forEach((c: number[], i: number) => {
-                    if (c.length === 4) {
-                        boxes.push({
-                            id: `ref-${currentMatch.index}-${i}`,
-                            text: currentMatch[1] || 'Object',
-                            // Swapped to [x1, y1, x2, y2]
-                            box: { x1: c[0], y1: c[1], x2: c[2], y2: c[3] },
-                            raw: currentMatch[0]
-                        });
-                    }
-                });
-            }
-        } catch (e) { }
-    }
-
-    // Pattern 3: Broken/Standalone but with closing det: [[coords]]<|/det|>
-    const closingDetRegex = /(\[\[.*?\]\])<\|\/det\|>/g;
-    while ((match = closingDetRegex.exec(text)) !== null) {
-        const currentMatch = match;
-        try {
-            const parsed = JSON.parse(currentMatch[1]);
-            const flatCoords = (Array.isArray(parsed) && Array.isArray(parsed[0])) ? parsed : [parsed];
-
-            flatCoords.forEach((coords: number[], idx: number) => {
-                if (Array.isArray(coords) && coords.length === 4) {
+            flatCoords.forEach((c: number[], i: number) => {
+                if (Array.isArray(c) && c.length === 4) {
                     boxes.push({
-                        id: `closing-det-${currentMatch.index}-${idx}`,
-                        text: 'Located Item',
-                        // Swapped to [x1, y1, x2, y2]
-                        box: { x1: coords[0], y1: coords[1], x2: coords[2], y2: coords[3] },
-                        raw: currentMatch[0] // Captures including <|/det|>
+                        id: `${type}-${start}-${i}`,
+                        text: textContent || 'Located Item',
+                        // Try standard [x1, y1, x2, y2] format
+                        box: { x1: c[0], y1: c[1], x2: c[2], y2: c[3] },
+                        raw: match[0]
                     });
                 }
             });
-        } catch (e) { }
+            matchedRanges.push([start, end]);
+        } catch (e) {
+            console.error('Failed to parse coords:', coordsStr, e);
+        }
+    };
+
+    // 1. Full tags: <|ref|>text<|/ref|><|det|>[[coords]]<|/det|>
+    const refDetWithClosingRegex = /<\|ref\|>(.*?)<\|\/ref\|><\|det\|>(\[\[.*?\]\])<\|\/det\|>/g;
+    let match;
+    while ((match = refDetWithClosingRegex.exec(text)) !== null) {
+        addBox(match, 'ref-closing', match[1], match[2]);
     }
 
-    const standaloneRegex = /\[\[\d+,\s*\d+,\s*\d+,\s*\d+\]\](?!<\|\/det\|>)/g; // Negative lookahead to avoid double counting
+    // 2. Half tags (legacy): <|ref|>text<|det|>[[coords]]
+    const refDetRegex = /<\|ref\|>(.*?)<\|det\|>(\[\[.*?\]\])/g;
+    while ((match = refDetRegex.exec(text)) !== null) {
+        addBox(match, 'ref', match[1], match[2]);
+    }
+
+    // 3. Partial closing: [[coords]]<|/det|>
+    const closingDetRegex = /(\[\[.*?\]\])<\|\/det\|>/g;
+    while ((match = closingDetRegex.exec(text)) !== null) {
+        addBox(match, 'closing-det', 'Located Item', match[1]);
+    }
+
+    // 4. Standalone coords: [[coords]]
+    const standaloneRegex = /\[\[\d+,\s*\d+,\s*\d+,\s*\d+\]\]/g;
     while ((match = standaloneRegex.exec(text)) !== null) {
-        const currentMatch = match;
-        try {
-            const parsed = JSON.parse(currentMatch[0]);
-            const coords = Array.isArray(parsed[0]) ? parsed[0] : parsed;
-            if (Array.isArray(coords) && coords.length === 4) {
-                // Check dupes
-                const exists = boxes.some(b =>
-                    b.box.x1 === coords[0] && b.box.y1 === coords[1] &&
-                    b.box.x2 === coords[2] && b.box.y2 === coords[3]
-                );
-
-                if (!exists) {
-                    boxes.push({
-                        id: `standalone-${currentMatch.index}`,
-                        text: 'Located Item',
-                        // Swapped to [x1, y1, x2, y2]
-                        box: { x1: coords[0], y1: coords[1], x2: coords[2], y2: coords[3] },
-                        raw: currentMatch[0]
-                    });
-                }
-            }
-        } catch (e) { }
+        addBox(match, 'standalone', 'Located Item', match[0]);
     }
 
-    return boxes;
+    // Sort boxes by their appearance in text to keep numbering intuitive
+    return boxes.sort((a, b) => {
+        const indexA = parseInt(a.id.split('-')[1]);
+        const indexB = parseInt(b.id.split('-')[1]);
+        return indexA - indexB;
+    });
 }
 
 export const OCR_PROMPTS = {

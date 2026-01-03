@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import {
   Scan,
   FileText,
@@ -16,7 +16,10 @@ import {
   Type,
   ChevronsLeft,
   ChevronsRight,
-  Columns
+  Columns,
+  Edit3,
+  X,
+  RotateCcw
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -39,10 +42,41 @@ function App() {
   const [copied, setCopied] = useState(false);
   const [showHtml, setShowHtml] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [backendImage, setBackendImage] = useState<string | null>(null);
-  const [useBackendImage, setUseBackendImage] = useState(false);
   const [locateKeyword, setLocateKeyword] = useState('');
   const [layoutMode, setLayoutMode] = useState<'split' | 'image' | 'result'>('split');
+  const [customPrompts, setCustomPrompts] = useState<Record<string, string>>({});
+  const [editingTask, setEditingTask] = useState<string | null>(null);
+  const [editPromptValue, setEditPromptValue] = useState('');
+
+  // Load custom prompts from localStorage
+  useEffect(() => {
+    const saved = localStorage.getItem('deepseek-custom-prompts');
+    if (saved) {
+      try {
+        setCustomPrompts(JSON.parse(saved));
+      } catch (e) {
+        console.error('Failed to load custom prompts:', e);
+      }
+    }
+  }, []);
+
+  // Save custom prompts to localStorage
+  const saveCustomPrompt = (taskId: string, prompt: string) => {
+    const updated = { ...customPrompts, [taskId]: prompt };
+    setCustomPrompts(updated);
+    localStorage.setItem('deepseek-custom-prompts', JSON.stringify(updated));
+  };
+
+  const resetPrompt = (taskId: string) => {
+    const updated = { ...customPrompts };
+    delete updated[taskId];
+    setCustomPrompts(updated);
+    localStorage.setItem('deepseek-custom-prompts', JSON.stringify(updated));
+  };
+
+  const getPrompt = (taskId: keyof typeof OCR_PROMPTS): string => {
+    return customPrompts[taskId] || OCR_PROMPTS[taskId];
+  };
 
   const handleImageSelect = (file: File) => {
     setSelectedFile(file);
@@ -60,7 +94,6 @@ function App() {
     setLoading(true);
     setResult('');
     setBoxes([]);
-    setBackendImage(null);
     setError(null);
 
     const prompt = `<|grounding|>Locate <|ref|>${locateKeyword}<|/ref|> in the image.`;
@@ -68,10 +101,6 @@ function App() {
     try {
       const response = await performOCR(selectedFile, prompt);
       setResult(response.text);
-
-      if (response.processed_image) {
-        setBackendImage(`data:image/png;base64,${response.processed_image}`);
-      }
 
       const parsedBoxes = parseGrounding(response.text);
       setBoxes(parsedBoxes);
@@ -87,7 +116,6 @@ function App() {
     setPreviewUrl(null);
     setResult('');
     setBoxes([]);
-    setBackendImage(null);
     setError(null);
     setLayoutMode('split');
   };
@@ -98,7 +126,6 @@ function App() {
     setLoading(true);
     setResult('');
     setBoxes([]);
-    setBackendImage(null);
     setError(null);
 
     // Auto-switch to result view on mobile or if needed, but keeping split is safer
@@ -107,13 +134,8 @@ function App() {
     }
 
     try {
-      const response = await performOCR(selectedFile, OCR_PROMPTS[task]);
+      const response = await performOCR(selectedFile, getPrompt(task));
       setResult(response.text);
-
-      // Store backend-drawn image if returned
-      if (response.processed_image) {
-        setBackendImage(`data:image/png;base64,${response.processed_image}`);
-      }
 
       const parsedBoxes = parseGrounding(response.text);
       setBoxes(parsedBoxes);
@@ -133,9 +155,12 @@ function App() {
   const renderResult = useMemo(() => {
     if (!result) return null;
 
-    // Pattern for <|ref|>...<|/ref|><|det|>...<|/det|> OR [[...]]<|/det|> OR [[...]]
-    // Updated to be more permissive for nested arrays: [[...]]
-    const regex = /(<\|ref\|>.*?<\|\/ref\|><\|det\|>\[\[.*?\]\]<\|\/det\|>|\[\[.*?\]\]<\|\/det\|>|\[\[\d+,\s*\d+,\s*\d+,\s*\d+\]\])/g;
+    // Synchronized with parseGrounding patterns:
+    // 1. Full tags: <|ref|>...<|/ref|><|det|>[[...]]<|/det|>
+    // 2. Legacy tags: <|ref|>...<|det|>[[...]]
+    // 3. Partial closing: [[...]]<|/det|>
+    // 4. Standalone: [[...]]
+    const regex = /(<\|ref\|>.*?<\|\/ref\|><\|det\|>\[\[.*?\]\]<\|\/det\|>|<\|ref\|>.*?<\|det\|>\[\[.*?\]\]|\[\[.*?\]\]<\|\/det\|>|\[\[\d+,\s*\d+,\s*\d+,\s*\d+\]\])/g;
     const parts = result.split(regex);
 
     return parts.map((part, i) => {
@@ -197,6 +222,86 @@ function App() {
         toId={highlightedId ? `box-highlighted-${highlightedId}` : null}
         visible={!!highlightedId}
       />
+
+      {/* Prompt Editor Modal */}
+      {editingTask && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-slate-900 border border-white/10 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col"
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-6 border-b border-white/10">
+              <div>
+                <h3 className="text-lg font-bold text-white">Edit Prompt</h3>
+                <p className="text-sm text-slate-400 mt-1">
+                  Customize the prompt for {tasks.find(t => t.id === editingTask)?.label}
+                </p>
+              </div>
+              <button
+                onClick={() => setEditingTask(null)}
+                className="p-2 rounded-lg hover:bg-white/5 transition-colors"
+              >
+                <X size={20} className="text-slate-400" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="flex-grow overflow-y-auto p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-300 mb-2">
+                  Prompt
+                </label>
+                <textarea
+                  value={editPromptValue}
+                  onChange={(e) => setEditPromptValue(e.target.value)}
+                  className="w-full h-32 bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-slate-200 placeholder-slate-500 focus:outline-none focus:border-primary-500/50 focus:bg-primary-500/5 transition-all resize-none font-mono text-sm"
+                  placeholder="Enter your custom prompt..."
+                />
+              </div>
+
+              <div className="bg-slate-800/50 border border-white/5 rounded-xl p-4">
+                <p className="text-xs text-slate-400 mb-2">Default Prompt:</p>
+                <code className="text-xs text-slate-300 font-mono">
+                  {OCR_PROMPTS[editingTask as keyof typeof OCR_PROMPTS]}
+                </code>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="flex items-center justify-between p-6 border-t border-white/10 bg-slate-950/50">
+              <button
+                onClick={() => {
+                  resetPrompt(editingTask);
+                  setEditPromptValue(OCR_PROMPTS[editingTask as keyof typeof OCR_PROMPTS]);
+                }}
+                className="btn-secondary text-sm py-2 px-4 flex items-center gap-2"
+              >
+                <RotateCcw size={14} />
+                Reset to Default
+              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setEditingTask(null)}
+                  className="btn-secondary text-sm py-2 px-4"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    saveCustomPrompt(editingTask, editPromptValue);
+                    setEditingTask(null);
+                  }}
+                  className="bg-primary-500 hover:bg-primary-600 text-white font-medium text-sm py-2 px-4 rounded-xl transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
       {/* Background Orbs */}
       <div className="fixed top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary-600/20 rounded-full blur-[120px] -z-10 animate-pulse" />
       <div className="fixed bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-600/10 rounded-full blur-[120px] -z-10" />
@@ -254,11 +359,11 @@ function App() {
             <div className="glass-card flex-grow relative overflow-hidden flex flex-col bg-slate-900/30 border border-white/10 rounded-2xl">
               <ImageUploader
                 onImageSelect={handleImageSelect}
-                selectedImage={useBackendImage && backendImage ? backendImage : previewUrl}
+                selectedImage={previewUrl}
                 onClear={clearImage}
-                boxes={useBackendImage ? [] : boxes}
-                showBoxes={useBackendImage ? false : showBoxes}
-                highlightedId={useBackendImage ? null : highlightedId}
+                boxes={boxes}
+                showBoxes={showBoxes}
+                highlightedId={highlightedId}
               />
 
               {boxes.length > 0 && (
@@ -270,17 +375,6 @@ function App() {
                     {showBoxes ? <EyeOff size={14} /> : <Eye size={14} />}
                     {showBoxes ? 'Hide Labels' : 'Show Labels'}
                   </button>
-
-                  {backendImage && (
-                    <button
-                      onClick={() => setUseBackendImage(!useBackendImage)}
-                      className={`btn-secondary blur-none backdrop-blur-md text-xs py-1.5 ${useBackendImage ? 'bg-primary-500/20 border-primary-500/40' : 'bg-slate-900/80'}`}
-                      title={useBackendImage ? 'Show Interactive Overlay' : 'Show Backend Image'}
-                    >
-                      <LayoutTemplate size={14} />
-                      {useBackendImage ? 'Overlay' : 'Drawn'}
-                    </button>
-                  )}
                 </div>
               )}
             </div>
@@ -313,20 +407,34 @@ function App() {
 
               <div className="grid grid-cols-5 gap-2">
                 {tasks.map((task) => (
-                  <button
-                    key={task.id}
-                    disabled={!selectedFile || loading}
-                    onClick={() => handleOCR(task.id as any)}
-                    className={`
-                      flex flex-col items-center justify-center p-2 rounded-xl border transition-all duration-300 gap-1
-                      ${!selectedFile ? 'opacity-50 cursor-not-allowed border-white/5 bg-white/5' : 'hover:scale-[1.02] active:scale-95'}
-                      ${loading ? 'cursor-wait' : ''}
-                      bg-white/5 border-white/10 hover:border-primary-500/50 hover:bg-primary-500/10 group
-                    `}
-                  >
-                    <task.icon className={`w-5 h-5 ${!selectedFile ? 'text-slate-500' : 'text-primary-400 group-hover:text-primary-300'}`} />
-                    <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-slate-200 hidden sm:block">{task.label}</span>
-                  </button>
+                  <div key={task.id} className="relative group/task">
+                    <button
+                      disabled={!selectedFile || loading}
+                      onClick={() => handleOCR(task.id as any)}
+                      className={`
+                        w-full flex flex-col items-center justify-center p-2 rounded-xl border transition-all duration-300 gap-1
+                        ${!selectedFile ? 'opacity-50 cursor-not-allowed border-white/5 bg-white/5' : 'hover:scale-[1.02] active:scale-95'}
+                        ${loading ? 'cursor-wait' : ''}
+                        bg-white/5 border-white/10 hover:border-primary-500/50 hover:bg-primary-500/10 group
+                      `}
+                    >
+                      <task.icon className={`w-5 h-5 ${!selectedFile ? 'text-slate-500' : 'text-primary-400 group-hover:text-primary-300'}`} />
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400 group-hover:text-slate-200 hidden sm:block">{task.label}</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingTask(task.id);
+                        setEditPromptValue(getPrompt(task.id as any));
+                      }}
+                      className="absolute -top-1 -right-1 p-1 rounded-md bg-slate-800 border border-white/10 opacity-0 group-hover/task:opacity-100 transition-opacity hover:bg-slate-700 hover:border-primary-500/50"
+                      title="Edit prompt"
+                    >
+                      <Edit3 size={12} className="text-slate-400" />
+                    </button>
+                    {customPrompts[task.id] && (
+                      <div className="absolute -top-1 -left-1 w-2 h-2 bg-primary-500 rounded-full" title="Custom prompt" />
+                    )}
+                  </div>
                 ))}
               </div>
             </div>
