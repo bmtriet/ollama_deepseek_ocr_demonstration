@@ -45,24 +45,52 @@
   @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
 }
 
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-slate-900;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+}
+
 @layer components {
   .prose-custom table {
-    @apply w-full border-collapse my-4 rounded-lg overflow-hidden border border-white/10;
+    @apply w-full border-collapse my-4 rounded-lg overflow-hidden border-2 border-white/20 shadow-lg;
+  }
+
+  .prose-custom thead {
+    @apply bg-gradient-to-r from-primary-600/20 to-primary-500/20;
   }
 
   .prose-custom th {
-    @apply bg-white/10 text-primary-300 font-bold p-3 text-left border-b border-white/10;
+    @apply bg-white/5 text-primary-300 font-bold p-3 text-left border-2 border-white/20 uppercase text-xs tracking-wider;
   }
 
   .prose-custom td {
-    @apply p-3 border-b border-white/5 text-primary-100;
+    @apply p-3 border border-white/20 text-slate-200;
+  }
+
+  .prose-custom tbody tr {
+    @apply transition-colors duration-150;
+  }
+
+  .prose-custom tbody tr:nth-child(odd) {
+    @apply bg-white/[0.02];
+  }
+
+  .prose-custom tbody tr:nth-child(even) {
+    @apply bg-black/10;
   }
 
   .prose-custom tr:last-child td {
-    @apply border-b-0;
+    @apply border-b-2 border-white/20;
   }
 
-  .prose-custom tr:hover {
-    @apply bg-white/5 transition-colors duration-150;
+  .prose-custom tbody tr:hover {
+    @apply bg-primary-500/10 transition-colors duration-150;
   }
 }
